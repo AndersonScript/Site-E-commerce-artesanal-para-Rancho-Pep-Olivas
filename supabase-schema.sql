@@ -67,6 +67,13 @@ create table if not exists public.admins (
   criado_em  timestamptz not null default now()
 );
 
+-- convites: e-mails que viram administrador assim que criarem a conta e verificarem o e-mail
+create table if not exists public.admin_convites (
+  email      text primary key check (email = lower(btrim(email))),
+  nome       text not null,
+  criado_em  timestamptz not null default now()
+);
+
 create table if not exists public.pedidos (
   id                  uuid primary key default gen_random_uuid(),
   numero              bigint generated always as identity unique,
@@ -122,6 +129,7 @@ alter table public.admins         enable row level security;
 alter table public.pedidos        enable row level security;
 alter table public.pedido_eventos enable row level security;
 alter table public.cupons         enable row level security;
+alter table public.admin_convites enable row level security;
 
 drop policy if exists config_leitura   on public.config;
 drop policy if exists config_edita     on public.config;
@@ -145,7 +153,7 @@ create policy pedidos_leitura  on public.pedidos  for select to authenticated us
 create policy eventos_leitura  on public.pedido_eventos for select to authenticated using (public.is_admin());
 create policy cupons_admin     on public.cupons for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
-revoke all on public.config, public.produtos, public.admins, public.pedidos, public.pedido_eventos, public.cupons from anon, authenticated;
+revoke all on public.config, public.produtos, public.admins, public.pedidos, public.pedido_eventos, public.cupons, public.admin_convites from anon, authenticated;
 grant select, insert, update, delete on public.cupons to authenticated;
 grant select on public.config, public.produtos to anon, authenticated;
 grant update on public.config to authenticated;
@@ -330,20 +338,41 @@ begin
 end $$;
 
 -- ---------- ADMIN: gerenciar administradores ----------
+drop function if exists public.adicionar_admin(text, text);
 create or replace function public.adicionar_admin(p_email text, p_nome text)
-returns void language plpgsql security definer set search_path = public as $$
-declare v_uid uuid; v_confirmado timestamptz;
+returns text language plpgsql security definer set search_path = public as $$
+declare v_uid uuid; v_confirmado timestamptz; v_email text := lower(btrim(coalesce(p_email, '')));
 begin
   if not public.is_admin() then raise exception 'Acesso negado.'; end if;
-  select id, email_confirmed_at into v_uid, v_confirmado from auth.users where lower(email) = lower(btrim(p_email));
-  if v_uid is null then
-    raise exception 'Esse e-mail ainda não tem usuário. Envie um convite em Supabase > Authentication > Users > Invite user.';
+  if v_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then raise exception 'E-mail inválido.'; end if;
+  if length(btrim(coalesce(p_nome, ''))) < 2 then raise exception 'Informe o nome da pessoa.'; end if;
+  select id, email_confirmed_at into v_uid, v_confirmado from auth.users where lower(email) = v_email;
+  if v_uid is not null and v_confirmado is not null then
+    insert into public.admins (user_id, nome, email) values (v_uid, btrim(p_nome), v_email)
+    on conflict (user_id) do update set nome = excluded.nome, email = excluded.email;
+    delete from public.admin_convites where email = v_email;
+    return 'adicionado';
   end if;
-  if v_confirmado is null then
-    raise exception 'Esse e-mail ainda não foi verificado. A pessoa precisa aceitar o convite recebido por e-mail e depois você adiciona aqui.';
-  end if;
-  insert into public.admins (user_id, nome, email) values (v_uid, btrim(p_nome), lower(btrim(p_email)))
-  on conflict (user_id) do update set nome = excluded.nome, email = excluded.email;
+  -- ainda não tem conta (ou não verificou o e-mail): deixa o convite guardado
+  insert into public.admin_convites (email, nome) values (v_email, btrim(p_nome))
+  on conflict (email) do update set nome = excluded.nome;
+  return 'convite';
+end $$;
+
+-- chamada pelo próprio site quando alguém entra: se o e-mail (já verificado) tem convite, vira administrador
+create or replace function public.reivindicar_admin()
+returns boolean language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); v_email text; v_conf timestamptz; v_nome text;
+begin
+  if v_uid is null then return false; end if;
+  select lower(email), email_confirmed_at into v_email, v_conf from auth.users where id = v_uid;
+  if v_conf is null then return false; end if;
+  select nome into v_nome from public.admin_convites where email = v_email;
+  if v_nome is null then return false; end if;
+  insert into public.admins (user_id, nome, email) values (v_uid, v_nome, v_email)
+  on conflict (user_id) do nothing;
+  delete from public.admin_convites where email = v_email;
+  return true;
 end $$;
 
 create or replace function public.listar_admins()
@@ -374,6 +403,7 @@ revoke all on function public.atualizar_status_pedido(uuid,text,boolean) from pu
 revoke all on function public.adicionar_admin(text,text)                from public;
 revoke all on function public.remover_admin(uuid)                       from public;
 revoke all on function public.is_admin()                                from public;
+revoke all on function public.reivindicar_admin()                        from public;
 grant execute on function public.criar_pedido(jsonb)                       to anon, authenticated;
 grant execute on function public.validar_cupom(text,bigint)                 to anon, authenticated;
 grant execute on function public.consultar_pedido(bigint,text)              to anon, authenticated;
@@ -382,6 +412,7 @@ grant execute on function public.atualizar_status_pedido(uuid,text,boolean) to a
 grant execute on function public.adicionar_admin(text,text)                to authenticated;
 grant execute on function public.remover_admin(uuid)                       to authenticated;
 grant execute on function public.is_admin()                                to anon, authenticated;
+grant execute on function public.reivindicar_admin()                        to authenticated;
 
 -- ---------- FOTOS (Storage) ----------
 insert into storage.buckets (id, name, public) values ('imagens', 'imagens', true)
@@ -412,10 +443,12 @@ insert into public.cupons (codigo, tipo, valor, minimo_centavos, ativo)
 values ('BEMVINDO10', 'percentual', 10, 0, false) on conflict (codigo) do nothing;
 
 -- =====================================================================
--- DEPOIS DE RODAR: crie seu usuário em Authentication > Users
--- (use "Invite user" ou marque "Auto Confirm User" — o e-mail precisa estar VERIFICADO)
--- e então rode a linha abaixo, trocando o e-mail:
+-- PRONTO. O banco está instalado.
+-- Para criar o primeiro administrador, o assistente do site (/#admin) já
+-- acrescenta no fim deste texto uma linha assim (você não precisa fazer nada):
 --
---   insert into public.admins (user_id, nome, email)
---   select id, 'Seu Nome', email from auth.users where email = 'seu@email.com';
+--   insert into public.admin_convites (email, nome) values ('dono@email.com', 'Nome do dono')
+--   on conflict (email) do update set nome = excluded.nome;
+--
+-- Depois é só abrir o site em /#admin > "Criar meu acesso" e confirmar o e-mail.
 -- =====================================================================

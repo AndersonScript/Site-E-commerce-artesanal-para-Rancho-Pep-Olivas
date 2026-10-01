@@ -250,6 +250,31 @@ ul{ margin:0; padding:0; list-style:none; }
 .guia-etapa__nota{ background:var(--areia); border-radius:12px; padding:10px 14px; font-size:.8rem; color:var(--terra-55); margin-top:10px; }
 .guia-config__rodape{ text-align:center; margin-top:30px; padding-top:22px; border-top:1px solid var(--terra-20); font-size:.84rem; color:var(--terra-55); }
 </style>
+<style>
+/* ---------- Assistente de instalação ---------- */
+.assistente{ max-width:700px; margin:0 auto; padding:34px 0 60px; }
+.assistente__titulo{ font-size:1.6rem; }
+.assistente__sub{ color:var(--terra-55); font-size:.92rem; margin:6px 0 22px; }
+.assist-passos{ display:flex; flex-wrap:wrap; gap:8px 18px; margin-bottom:22px; font-size:.78rem; color:var(--terra-40); }
+.assist-passo{ display:flex; align-items:center; gap:7px; }
+.assist-passo b{ width:22px; height:22px; border-radius:50%; border:1.5px solid var(--terra-20); display:inline-flex; align-items:center; justify-content:center; font-size:.72rem; }
+.assist-passo.atual{ color:var(--terra); font-weight:700; }
+.assist-passo.atual b{ background:var(--oliva); border-color:var(--oliva); color:var(--creme); }
+.assist-passo.feito b{ background:var(--areia); border-color:var(--oliva); color:var(--oliva); }
+.assist-aviso{ background:rgba(122,36,52,.09); color:var(--vinho); border-radius:14px; padding:12px 16px; font-size:.86rem; line-height:1.55; margin-bottom:20px; }
+.assist-ok{ background:rgba(113,128,60,.14); color:var(--terra-70); border-radius:14px; padding:12px 16px; font-size:.86rem; line-height:1.6; margin-top:14px; }
+.assist-form{ margin-top:16px; display:flex; flex-direction:column; gap:14px; align-items:flex-start; }
+.assist-form .campo, .assist-form .grade-campos{ width:100%; }
+.assist-botoes{ display:flex; flex-wrap:wrap; gap:10px; margin-top:14px; }
+.assist-lista{ margin-top:10px; padding-left:20px; font-size:.86rem; color:var(--terra-70); line-height:1.75; }
+.assist-detalhe{ margin-top:12px; font-size:.84rem; color:var(--terra-70); }
+.assist-detalhe summary{ cursor:pointer; color:var(--oliva-escuro); font-weight:600; }
+.assist-detalhe ol{ margin-top:8px; padding-left:20px; line-height:1.7; }
+.assist-sql{ width:100%; margin-top:8px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.72rem; border:1.5px solid var(--terra-20); border-radius:12px; padding:10px; background:var(--areia); color:var(--terra); }
+.assist-copia{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:8px; }
+.assist-copia code{ background:var(--terra-10); padding:6px 10px; border-radius:8px; font-size:.82rem; word-break:break-all; }
+.assist-bloco{ margin-top:6px; }
+</style>
 </head>
 <body>
 <style>
@@ -877,20 +902,482 @@ ul{ margin:0; padding:0; list-style:none; }
 <!-- ============ Toast ============ -->
 <div class="toast" id="toast"></div>
 
+<script type="text/plain" id="sql-base">
+-- =====================================================================
+-- RANCHO PEP OLIVAS — banco de dados (Supabase / Postgres)
+-- Cole este arquivo inteiro em: Supabase > SQL Editor > New query > Run
+-- Pode ser executado mais de uma vez sem duplicar dados.
+-- =====================================================================
+
+-- ---------- TABELAS ----------
+create table if not exists public.config (
+  id                 int primary key default 1 check (id = 1),
+  nome_loja          text not null default 'Rancho Pep Olivas',
+  whatsapp           text not null default '5511999999999',
+  mensagem_whatsapp  text not null default 'Olá! Vim pelo site do *Rancho Pep Olivas* e gostaria de fazer um pedido.',
+  pix_chave          text not null default '',
+  pix_cidade         text not null default 'SAO PAULO',
+  logo_url           text,
+  instagram          text,
+  facebook           text,
+  outro_link_rotulo  text,
+  outro_link_url     text,
+  chatbot_ativo      boolean not null default false,
+  tema               jsonb   not null default '{}'::jsonb,   -- cores personalizadas
+  textos             jsonb   not null default '{}'::jsonb,   -- textos do site (título, história, FAQ, política...)
+  banner_ativo       boolean not null default false,
+  banner_texto       text,
+  banner_link        text,
+  verificar_idade    boolean not null default true,          -- portão "tenho 18 anos ou mais"
+  frete_fixo_centavos          int check (frete_fixo_centavos is null or frete_fixo_centavos >= 0),  -- null = "a combinar"
+  frete_gratis_acima_centavos  int check (frete_gratis_acima_centavos is null or frete_gratis_acima_centavos >= 0),
+  estoque_baixo      int not null default 5,
+  atualizado_em      timestamptz not null default now()
+);
+insert into public.config (id) values (1) on conflict (id) do nothing;
+
+create table if not exists public.produtos (
+  id              uuid primary key default gen_random_uuid(),
+  categoria       text not null check (categoria in ('vinhos','azeites','kits')),
+  nome            text not null check (length(btrim(nome)) > 0),
+  volume_ml       int check (volume_ml is null or volume_ml > 0),
+  preco_centavos  int not null check (preco_centavos >= 0),
+  estoque         int not null default 0 check (estoque >= 0),
+  destaque        boolean not null default false,
+  ativo           boolean not null default true,
+  imagem_url      text,
+  notas_prova     text,
+  descricao       text,
+  criado_em       timestamptz not null default now()
+);
+
+create table if not exists public.cupons (
+  id               uuid primary key default gen_random_uuid(),
+  codigo           text not null unique check (codigo = upper(btrim(codigo)) and length(codigo) between 3 and 30),
+  tipo             text not null check (tipo in ('percentual','valor')),
+  valor            int  not null check (valor > 0),          -- % (1 a 100) ou centavos
+  minimo_centavos  int  not null default 0 check (minimo_centavos >= 0),
+  usos_max         int  check (usos_max is null or usos_max > 0),
+  usos             int  not null default 0,
+  validade         date,
+  ativo            boolean not null default true,
+  criado_em        timestamptz not null default now(),
+  check (tipo <> 'percentual' or valor <= 100)
+);
+
+create table if not exists public.admins (
+  user_id    uuid primary key references auth.users(id) on delete cascade,
+  nome       text not null,
+  email      text not null,
+  criado_em  timestamptz not null default now()
+);
+
+-- convites: e-mails que viram administrador assim que criarem a conta e verificarem o e-mail
+create table if not exists public.admin_convites (
+  email      text primary key check (email = lower(btrim(email))),
+  nome       text not null,
+  criado_em  timestamptz not null default now()
+);
+
+create table if not exists public.pedidos (
+  id                  uuid primary key default gen_random_uuid(),
+  numero              bigint generated always as identity unique,
+  cliente_nome        text not null,
+  cliente_telefone    text not null,
+  tipo_entrega        text not null check (tipo_entrega in ('entrega','retirada')),
+  cep                 text,
+  logradouro          text,
+  numero_end          text,
+  complemento         text,
+  bairro              text,
+  cidade              text,
+  uf                  text,
+  observacoes         text,
+  itens               jsonb not null,
+  subtotal_centavos   bigint not null,
+  desconto_centavos   bigint not null default 0,
+  frete_centavos      bigint not null default 0,
+  frete_a_combinar    boolean not null default false,
+  cupom_codigo        text,
+  total_centavos      bigint not null,
+  forma_pagamento     text not null check (forma_pagamento in ('pix','cartao_entrega','dinheiro')),
+  pagamento_status    text not null default 'pendente' check (pagamento_status in ('pendente','pago')),
+  status              text not null default 'recebido'
+                      check (status in ('recebido','confirmado','separacao','embalagem','enviado','entregue','cancelado')),
+  criado_em           timestamptz not null default now(),
+  atualizado_em       timestamptz not null default now()
+);
+create index if not exists pedidos_status_idx on public.pedidos (status, criado_em desc);
+
+create table if not exists public.pedido_eventos (
+  id         bigint generated always as identity primary key,
+  pedido_id  uuid not null references public.pedidos(id) on delete cascade,
+  status     text not null,
+  por        text,
+  criado_em  timestamptz not null default now()
+);
+create index if not exists pedido_eventos_pedido_idx on public.pedido_eventos (pedido_id, criado_em);
+
+-- ---------- QUEM É ADMINISTRADOR ----------
+create or replace function public.is_admin()
+returns boolean language sql stable security definer set search_path = public as $$
+  -- só é administrador quem está na tabela E já verificou o e-mail
+  select exists (
+    select 1 from public.admins a join auth.users u on u.id = a.user_id
+     where a.user_id = auth.uid() and u.email_confirmed_at is not null);
+$$;
+
+-- ---------- SEGURANÇA (Row Level Security) ----------
+alter table public.config         enable row level security;
+alter table public.produtos       enable row level security;
+alter table public.admins         enable row level security;
+alter table public.pedidos        enable row level security;
+alter table public.pedido_eventos enable row level security;
+alter table public.cupons         enable row level security;
+alter table public.admin_convites enable row level security;
+
+drop policy if exists config_leitura   on public.config;
+drop policy if exists config_edita     on public.config;
+drop policy if exists produtos_leitura on public.produtos;
+drop policy if exists produtos_insere  on public.produtos;
+drop policy if exists produtos_edita   on public.produtos;
+drop policy if exists produtos_apaga   on public.produtos;
+drop policy if exists admins_leitura   on public.admins;
+drop policy if exists pedidos_leitura  on public.pedidos;
+drop policy if exists eventos_leitura  on public.pedido_eventos;
+drop policy if exists cupons_admin     on public.cupons;
+
+create policy config_leitura   on public.config   for select using (true);
+create policy config_edita     on public.config   for update to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy produtos_leitura on public.produtos for select using (ativo or public.is_admin());
+create policy produtos_insere  on public.produtos for insert to authenticated with check (public.is_admin());
+create policy produtos_edita   on public.produtos for update to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy produtos_apaga   on public.produtos for delete to authenticated using (public.is_admin());
+create policy admins_leitura   on public.admins   for select to authenticated using (public.is_admin());
+create policy pedidos_leitura  on public.pedidos  for select to authenticated using (public.is_admin());
+create policy eventos_leitura  on public.pedido_eventos for select to authenticated using (public.is_admin());
+create policy cupons_admin     on public.cupons for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+revoke all on public.config, public.produtos, public.admins, public.pedidos, public.pedido_eventos, public.cupons, public.admin_convites from anon, authenticated;
+grant select, insert, update, delete on public.cupons to authenticated;
+grant select on public.config, public.produtos to anon, authenticated;
+grant update on public.config to authenticated;
+grant insert, update, delete on public.produtos to authenticated;
+grant select on public.admins, public.pedidos, public.pedido_eventos to authenticated;
+
+-- ---------- CLIENTE: confere um cupom antes de finalizar ----------
+create or replace function public.validar_cupom(p_codigo text, p_subtotal bigint)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_c public.cupons%rowtype;
+  v_desc bigint;
+begin
+  select * into v_c from public.cupons
+   where codigo = upper(btrim(coalesce(p_codigo, ''))) and ativo
+     and (validade is null or validade >= current_date)
+     and (usos_max is null or usos < usos_max);
+  if not found then return jsonb_build_object('valido', false, 'mensagem', 'Cupom inválido ou expirado.'); end if;
+  if p_subtotal < v_c.minimo_centavos then
+    return jsonb_build_object('valido', false,
+      'mensagem', 'Este cupom vale para pedidos a partir de R$ ' || to_char(v_c.minimo_centavos / 100.0, 'FM999990.00'));
+  end if;
+  v_desc := case when v_c.tipo = 'percentual' then round(p_subtotal * v_c.valor / 100.0) else least(v_c.valor, p_subtotal) end;
+  return jsonb_build_object('valido', true, 'desconto_centavos', v_desc, 'mensagem', 'Cupom aplicado!');
+end $$;
+
+-- ---------- CLIENTE FAZ O PEDIDO (preço, cupom, frete e estoque conferidos AQUI, no servidor) ----------
+create or replace function public.criar_pedido(p jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_nome   text := btrim(coalesce(p->>'cliente_nome', ''));
+  v_tel    text := regexp_replace(coalesce(p->>'cliente_telefone', ''), '\D', '', 'g');
+  v_tipo   text := coalesce(p->>'tipo_entrega', 'entrega');
+  v_forma  text := coalesce(p->>'forma_pagamento', 'pix');
+  v_cep    text := regexp_replace(coalesce(p->>'cep', ''), '\D', '', 'g');
+  v_uf     text := upper(btrim(coalesce(p->>'uf', '')));
+  v_cod    text := upper(btrim(coalesce(p->>'cupom', '')));
+  v_item   jsonb;
+  v_prod   public.produtos%rowtype;
+  v_cfg    public.config%rowtype;
+  v_cupom  public.cupons%rowtype;
+  v_qtd    int;
+  v_itens  jsonb := '[]'::jsonb;
+  v_sub    bigint := 0;
+  v_desc   bigint := 0;
+  v_frete  bigint := 0;
+  v_comb   boolean := false;
+  v_total  bigint;
+  v_pedido public.pedidos%rowtype;
+begin
+  if length(v_nome) < 3 or length(v_nome) > 120 then raise exception 'Informe seu nome completo.'; end if;
+  if length(v_tel) <> 11 or substr(v_tel, 3, 1) <> '9' then raise exception 'Informe um celular válido com DDD.'; end if;
+  if v_tipo not in ('entrega','retirada') then raise exception 'Tipo de entrega inválido.'; end if;
+  if v_forma not in ('pix','cartao_entrega','dinheiro') then raise exception 'Forma de pagamento inválida.'; end if;
+  if jsonb_typeof(p->'itens') is distinct from 'array'
+     or jsonb_array_length(p->'itens') = 0
+     or jsonb_array_length(p->'itens') > 30 then
+    raise exception 'Carrinho inválido.';
+  end if;
+  if v_tipo = 'entrega' then
+    if length(v_cep) <> 8
+       or length(btrim(coalesce(p->>'logradouro', ''))) < 2
+       or length(btrim(coalesce(p->>'numero_end', ''))) < 1
+       or length(btrim(coalesce(p->>'cidade', ''))) < 2
+       or length(v_uf) <> 2 then
+      raise exception 'Endereço de entrega incompleto.';
+    end if;
+  end if;
+
+  for v_item in select value from jsonb_array_elements(p->'itens') order by value->>'produto_id' loop
+    v_qtd := (v_item->>'quantidade')::int;
+    if v_qtd is null or v_qtd < 1 or v_qtd > 50 then raise exception 'Quantidade inválida.'; end if;
+    select * into v_prod from public.produtos where id = (v_item->>'produto_id')::uuid and ativo for update;
+    if not found then raise exception 'Um dos produtos não está mais disponível.'; end if;
+    if v_prod.estoque < v_qtd then raise exception 'Estoque insuficiente para: %', v_prod.nome; end if;
+    update public.produtos set estoque = estoque - v_qtd where id = v_prod.id;
+    v_sub := v_sub + v_prod.preco_centavos::bigint * v_qtd;
+    v_itens := v_itens || jsonb_build_object('produto_id', v_prod.id, 'nome', v_prod.nome,
+                                             'preco_unit_centavos', v_prod.preco_centavos, 'quantidade', v_qtd);
+  end loop;
+
+  if v_cod <> '' then
+    select * into v_cupom from public.cupons
+     where codigo = v_cod and ativo and (validade is null or validade >= current_date)
+       and (usos_max is null or usos < usos_max) for update;
+    if not found then raise exception 'Cupom inválido ou expirado.'; end if;
+    if v_sub < v_cupom.minimo_centavos then raise exception 'O cupom não vale para o valor deste pedido.'; end if;
+    v_desc := case when v_cupom.tipo = 'percentual' then round(v_sub * v_cupom.valor / 100.0) else least(v_cupom.valor, v_sub) end;
+    update public.cupons set usos = usos + 1 where id = v_cupom.id;
+  end if;
+
+  select * into v_cfg from public.config where id = 1;
+  if v_tipo = 'entrega' then
+    if v_cfg.frete_fixo_centavos is null then
+      v_comb := true;
+    elsif v_cfg.frete_gratis_acima_centavos is not null and (v_sub - v_desc) >= v_cfg.frete_gratis_acima_centavos then
+      v_frete := 0;
+    else
+      v_frete := v_cfg.frete_fixo_centavos;
+    end if;
+  end if;
+  v_total := v_sub - v_desc + v_frete;
+
+  insert into public.pedidos (cliente_nome, cliente_telefone, tipo_entrega, cep, logradouro, numero_end, complemento,
+                              bairro, cidade, uf, observacoes, itens, subtotal_centavos, desconto_centavos, frete_centavos,
+                              frete_a_combinar, cupom_codigo, total_centavos, forma_pagamento)
+  values (v_nome, '55' || v_tel, v_tipo,
+          case when v_tipo = 'entrega' then v_cep end,
+          case when v_tipo = 'entrega' then left(btrim(p->>'logradouro'), 160) end,
+          case when v_tipo = 'entrega' then left(btrim(p->>'numero_end'), 20) end,
+          case when v_tipo = 'entrega' then left(nullif(btrim(coalesce(p->>'complemento','')), ''), 80) end,
+          case when v_tipo = 'entrega' then left(nullif(btrim(coalesce(p->>'bairro','')), ''), 80) end,
+          case when v_tipo = 'entrega' then left(btrim(p->>'cidade'), 80) end,
+          case when v_tipo = 'entrega' then v_uf end,
+          left(nullif(btrim(coalesce(p->>'observacoes','')), ''), 500),
+          v_itens, v_sub, v_desc, v_frete, v_comb, nullif(v_cod, ''), v_total, v_forma)
+  returning * into v_pedido;
+
+  insert into public.pedido_eventos (pedido_id, status, por) values (v_pedido.id, 'recebido', 'cliente');
+  return jsonb_build_object('numero', v_pedido.numero, 'subtotal_centavos', v_sub, 'desconto_centavos', v_desc,
+                            'frete_centavos', v_frete, 'frete_a_combinar', v_comb, 'total_centavos', v_total, 'itens', v_itens);
+end $$;
+
+-- ---------- CLIENTE: acompanha o pedido (precisa do número + celular usado no pedido) ----------
+create or replace function public.consultar_pedido(p_numero bigint, p_telefone text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_tel text := regexp_replace(coalesce(p_telefone, ''), '\D', '', 'g');
+  v_p   public.pedidos%rowtype;
+begin
+  if length(v_tel) < 11 then return null; end if;
+  select * into v_p from public.pedidos where numero = p_numero and right(cliente_telefone, 11) = right(v_tel, 11);
+  if not found then return null; end if;
+  return jsonb_build_object(
+    'numero', v_p.numero, 'status', v_p.status, 'pagamento_status', v_p.pagamento_status,
+    'tipo_entrega', v_p.tipo_entrega, 'total_centavos', v_p.total_centavos, 'criado_em', v_p.criado_em,
+    'itens', (select coalesce(jsonb_agg(jsonb_build_object('nome', i->>'nome', 'quantidade', (i->>'quantidade')::int)), '[]'::jsonb)
+                from jsonb_array_elements(v_p.itens) i),
+    'eventos', (select coalesce(jsonb_agg(jsonb_build_object('status', e.status, 'criado_em', e.criado_em) order by e.criado_em, e.id), '[]'::jsonb)
+                  from public.pedido_eventos e where e.pedido_id = v_p.id));
+end $$;
+
+-- ---------- ADMIN: muda etapa / confirma pagamento / cancela (devolvendo o estoque) ----------
+create or replace function public.atualizar_status_pedido(p_id uuid, p_status text, p_pago boolean default null)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_ped  public.pedidos%rowtype;
+  v_item jsonb;
+  v_nome text;
+begin
+  if not public.is_admin() then raise exception 'Acesso negado.'; end if;
+  if p_status not in ('recebido','confirmado','separacao','embalagem','enviado','entregue','cancelado') then
+    raise exception 'Etapa inválida.';
+  end if;
+  select * into v_ped from public.pedidos where id = p_id for update;
+  if not found then raise exception 'Pedido não encontrado.'; end if;
+  if v_ped.status in ('entregue','cancelado') and p_status <> v_ped.status then
+    raise exception 'Este pedido já foi encerrado.';
+  end if;
+  v_nome := (select nome from public.admins where user_id = auth.uid());
+
+  -- cancelar devolve o estoque (uma única vez)
+  if p_status = 'cancelado' and v_ped.status <> 'cancelado' then
+    for v_item in select value from jsonb_array_elements(v_ped.itens) loop
+      update public.produtos set estoque = estoque + (v_item->>'quantidade')::int
+       where id = (v_item->>'produto_id')::uuid;
+    end loop;
+  end if;
+
+  update public.pedidos
+     set status = p_status,
+         pagamento_status = case when p_pago is true then 'pago' else pagamento_status end,
+         atualizado_em = now()
+   where id = p_id;
+
+  if p_status <> v_ped.status then
+    insert into public.pedido_eventos (pedido_id, status, por) values (p_id, p_status, v_nome);
+  end if;
+  if p_pago is true and v_ped.pagamento_status = 'pendente' then
+    insert into public.pedido_eventos (pedido_id, status, por) values (p_id, 'pago', v_nome);
+  end if;
+end $$;
+
+-- ---------- ADMIN: gerenciar administradores ----------
+drop function if exists public.adicionar_admin(text, text);
+create or replace function public.adicionar_admin(p_email text, p_nome text)
+returns text language plpgsql security definer set search_path = public as $$
+declare v_uid uuid; v_confirmado timestamptz; v_email text := lower(btrim(coalesce(p_email, '')));
+begin
+  if not public.is_admin() then raise exception 'Acesso negado.'; end if;
+  if v_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then raise exception 'E-mail inválido.'; end if;
+  if length(btrim(coalesce(p_nome, ''))) < 2 then raise exception 'Informe o nome da pessoa.'; end if;
+  select id, email_confirmed_at into v_uid, v_confirmado from auth.users where lower(email) = v_email;
+  if v_uid is not null and v_confirmado is not null then
+    insert into public.admins (user_id, nome, email) values (v_uid, btrim(p_nome), v_email)
+    on conflict (user_id) do update set nome = excluded.nome, email = excluded.email;
+    delete from public.admin_convites where email = v_email;
+    return 'adicionado';
+  end if;
+  -- ainda não tem conta (ou não verificou o e-mail): deixa o convite guardado
+  insert into public.admin_convites (email, nome) values (v_email, btrim(p_nome))
+  on conflict (email) do update set nome = excluded.nome;
+  return 'convite';
+end $$;
+
+-- chamada pelo próprio site quando alguém entra: se o e-mail (já verificado) tem convite, vira administrador
+create or replace function public.reivindicar_admin()
+returns boolean language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); v_email text; v_conf timestamptz; v_nome text;
+begin
+  if v_uid is null then return false; end if;
+  select lower(email), email_confirmed_at into v_email, v_conf from auth.users where id = v_uid;
+  if v_conf is null then return false; end if;
+  select nome into v_nome from public.admin_convites where email = v_email;
+  if v_nome is null then return false; end if;
+  insert into public.admins (user_id, nome, email) values (v_uid, v_nome, v_email)
+  on conflict (user_id) do nothing;
+  delete from public.admin_convites where email = v_email;
+  return true;
+end $$;
+
+create or replace function public.listar_admins()
+returns table (user_id uuid, nome text, email text, verificado boolean, criado_em timestamptz)
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'Acesso negado.'; end if;
+  return query
+    select a.user_id, a.nome, a.email, (u.email_confirmed_at is not null), a.criado_em
+      from public.admins a left join auth.users u on u.id = a.user_id
+     order by a.criado_em;
+end $$;
+
+create or replace function public.remover_admin(p_user_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'Acesso negado.'; end if;
+  if p_user_id = auth.uid() then raise exception 'Você não pode remover o próprio acesso.'; end if;
+  if (select count(*) from public.admins) <= 1 then raise exception 'É preciso manter ao menos um administrador.'; end if;
+  delete from public.admins where user_id = p_user_id;
+end $$;
+
+revoke all on function public.criar_pedido(jsonb)                       from public;
+revoke all on function public.validar_cupom(text,bigint)                 from public;
+revoke all on function public.consultar_pedido(bigint,text)              from public;
+revoke all on function public.listar_admins()                            from public;
+revoke all on function public.atualizar_status_pedido(uuid,text,boolean) from public;
+revoke all on function public.adicionar_admin(text,text)                from public;
+revoke all on function public.remover_admin(uuid)                       from public;
+revoke all on function public.is_admin()                                from public;
+revoke all on function public.reivindicar_admin()                        from public;
+grant execute on function public.criar_pedido(jsonb)                       to anon, authenticated;
+grant execute on function public.validar_cupom(text,bigint)                 to anon, authenticated;
+grant execute on function public.consultar_pedido(bigint,text)              to anon, authenticated;
+grant execute on function public.listar_admins()                            to authenticated;
+grant execute on function public.atualizar_status_pedido(uuid,text,boolean) to authenticated;
+grant execute on function public.adicionar_admin(text,text)                to authenticated;
+grant execute on function public.remover_admin(uuid)                       to authenticated;
+grant execute on function public.is_admin()                                to anon, authenticated;
+grant execute on function public.reivindicar_admin()                        to authenticated;
+
+-- ---------- FOTOS (Storage) ----------
+insert into storage.buckets (id, name, public) values ('imagens', 'imagens', true)
+on conflict (id) do update set public = true;
+
+drop policy if exists imagens_leitura on storage.objects;
+drop policy if exists imagens_envia   on storage.objects;
+drop policy if exists imagens_edita   on storage.objects;
+drop policy if exists imagens_apaga   on storage.objects;
+create policy imagens_leitura on storage.objects for select using (bucket_id = 'imagens');
+create policy imagens_envia   on storage.objects for insert to authenticated with check (bucket_id = 'imagens' and public.is_admin());
+create policy imagens_edita   on storage.objects for update to authenticated using (bucket_id = 'imagens' and public.is_admin());
+create policy imagens_apaga   on storage.objects for delete to authenticated using (bucket_id = 'imagens' and public.is_admin());
+
+-- ---------- PRODUTOS DE EXEMPLO (só entram se a tabela estiver vazia) ----------
+insert into public.produtos (categoria, nome, volume_ml, preco_centavos, estoque, destaque, notas_prova, descricao)
+select * from (values
+  ('vinhos',  'Vinho Tinto Reserva Pep',                750, 12000, 18, true,  'Frutas vermelhas maduras, chocolate e baunilha. Taninos macios, final persistente.', 'Vinho artesanal de pequena safra, maturado em carvalho. Harmoniza com queijos curados e carnes assadas.'),
+  ('vinhos',  'Vinho Branco Colheita Pep',              750,  9800, 14, false, 'Cítrico e floral, com final fresco e leve mineralidade.', 'Vinho branco leve, colhido no ponto certo para acompanhar peixes e massas.'),
+  ('vinhos',  'Vinho Rosé Estação',                     750, 10500,  9, true,  'Frutas vermelhas frescas, final leve e refrescante.', 'Rosé de produção limitada, ideal para dias quentes e encontros ao ar livre.'),
+  ('azeites', 'Azeite Extravirgem Primeira Prensagem',  500,  7500, 24, true,  'Verde intenso, notas de folha de oliveira e amêndoa. Leve amargor e picância final — sinais de frescor.', 'Colhido e prensado no mesmo dia, em pequenos lotes.'),
+  ('azeites', 'Azeite Aromatizado com Ervas',           250,  5200, 20, false, 'Alecrim e alho levemente tostado.', 'Azeite artesanal aromatizado com ervas do próprio rancho — ótimo para finalizar pratos.'),
+  ('kits',    'Kit Degustação — Vinho + Azeite',       null, 18000, 10, true,  'A combinação perfeita para presentear: os dois carros-chefe do rancho.', 'Um vinho tinto reserva (750 ml) + um azeite extravirgem (500 ml) em caixa presente.')
+) as v(categoria, nome, volume_ml, preco_centavos, estoque, destaque, notas_prova, descricao)
+where not exists (select 1 from public.produtos);
+
+insert into public.cupons (codigo, tipo, valor, minimo_centavos, ativo)
+values ('BEMVINDO10', 'percentual', 10, 0, false) on conflict (codigo) do nothing;
+
+-- =====================================================================
+-- PRONTO. O banco está instalado.
+-- Para criar o primeiro administrador, o assistente do site (/#admin) já
+-- acrescenta no fim deste texto uma linha assim (você não precisa fazer nada):
+--
+--   insert into public.admin_convites (email, nome) values ('dono@email.com', 'Nome do dono')
+--   on conflict (email) do update set nome = excluded.nome;
+--
+-- Depois é só abrir o site em /#admin > "Criar meu acesso" e confirmar o e-mail.
+-- =====================================================================
+
+</script>
 <script>
 (function () {
   'use strict';
 
   /* =========================================================================
-     ★ CONFIGURAÇÃO DO BANCO DE DADOS — preencha estas duas linhas ★
-     Supabase > Project Settings > API
-       SUPABASE_URL      -> "Project URL"          (ex.: https://abcdxyz.supabase.co)
-       SUPABASE_ANON_KEY -> "anon public" key      (é pública por natureza; a segurança
-                                                    está nas regras do banco, já criadas)
-     Deixe vazio para ver o site em modo demonstração (sem banco).
+     ★ CONEXÃO COM O BANCO DE DADOS (Supabase)
+     Você NÃO precisa editar nada aqui: na primeira vez que abrir  /#admin  o
+     assistente do site pede o endereço e a chave e faz o resto.
+     Para o endereço valer para TODOS os visitantes, o assistente (passo 4)
+     entrega um index.html pronto com as 2 linhas abaixo preenchidas.
   ========================================================================= */
-  var SUPABASE_URL = '';
-  var SUPABASE_ANON_KEY = '';
+  var EMBUTIDO_URL = '';
+  var EMBUTIDO_KEY = '';
+  var SUPABASE_URL = EMBUTIDO_URL, SUPABASE_ANON_KEY = EMBUTIDO_KEY, ORIGEM_CONEXAO = EMBUTIDO_URL ? 'arquivo' : 'nenhuma';
+  try {   // conexão feita pelo assistente neste navegador tem prioridade (permite testar/trocar de conta)
+    var _salva = JSON.parse(localStorage.getItem('rpo_conexao') || 'null');
+    if (_salva && _salva.limpo) { SUPABASE_URL = ''; SUPABASE_ANON_KEY = ''; ORIGEM_CONEXAO = 'nenhuma'; }
+    else if (_salva && _salva.url && _salva.key) { SUPABASE_URL = _salva.url; SUPABASE_ANON_KEY = _salva.key; ORIGEM_CONEXAO = (_salva.url === EMBUTIDO_URL && _salva.key === EMBUTIDO_KEY) ? 'arquivo' : 'navegador'; }
+  } catch (e) { /* sem armazenamento: usa o que está no arquivo */ }
 
   var LOGO_PADRAO_BASE64 = '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';
   var sb = null;   // cliente do Supabase (criado na inicialização)
@@ -1998,6 +2485,10 @@ ul{ margin:0; padding:0; list-style:none; }
     var sessao = s.data && s.data.session;
     if (!sessao) return;
     var ok = await sb.rpc('is_admin');
+    if (!ok.error && !ok.data) {   // tem convite (feito pelo assistente ou pela aba Equipe)? vira administrador
+      var cl = await sb.rpc('reivindicar_admin');
+      if (!cl.error && cl.data) ok = await sb.rpc('is_admin');
+    }
     if (ok.error || !ok.data) return;
     var me = await sb.from('admins').select('user_id,nome,email').eq('user_id', sessao.user.id).maybeSingle();
     estado.admin = me.data ? { id: me.data.user_id, nome: me.data.nome, email: me.data.email } : { id: sessao.user.id, nome: sessao.user.email, email: sessao.user.email };
@@ -2007,8 +2498,9 @@ ul{ margin:0; padding:0; list-style:none; }
   function renderAdmin() {
     var alvo = document.getElementById('conteudo-admin');
     if (!alvo) return;
-    if (!NUVEM) { alvo.innerHTML = telaSemBancoHtml(); return; }
+    if (!NUVEM) { renderAssistente(1); return; }
     if (recuperandoSenha) { alvo.innerHTML = telaNovaSenhaHtml(); anexarEventoNovaSenha(); return; }
+    if (!estado.admin && estado.erroConexao && !diagnosticoFeito) { abrirAssistenteConforme(); return; }
     if (!estado.admin) { alvo.innerHTML = telaLoginAdminHtml(); anexarEventoLoginAdmin(); return; }
     alvo.innerHTML =
       '<div class="shell-admin"><div class="admin-topo">' +
@@ -2036,52 +2528,315 @@ ul{ margin:0; padding:0; list-style:none; }
   function etapaGuiaHtml(n, titulo, corpoHtml) {
     return '<div class="guia-etapa"><span class="guia-etapa__numero">' + n + '</span><div class="guia-etapa__corpo"><h3>' + titulo + '</h3>' + corpoHtml + '</div></div>';
   }
-  function guiaConfiguracaoHtml() {
-    return (
-      '<div class="guia-config">' +
-      '<h2 style="font-size:1.3rem;margin-bottom:6px;">Como colocar a loja para funcionar</h2>' +
-      '<p style="color:var(--terra-55);font-size:.9rem;margin-bottom:20px;">Sem termo técnico, um passo de cada vez. São uns 15 minutos, sem pressa. Isso só precisa ser feito <strong>uma vez</strong>.</p>' +
-      '<div class="guia-config__aviso">💡 A conta abaixo deve ser criada por <strong>quem é dono da loja</strong> — é onde ficam guardados os pedidos e os produtos de verdade, então o e-mail e a senha devem ser dele(a), não de quem está montando o site.</div>' +
-
-      etapaGuiaHtml(1, 'Criar a conta do banco de dados (Supabase)',
-        '<ol><li>Acesse <code>supabase.com</code> e clique em <strong>Start your project</strong>.</li>' +
-        '<li>Entre com seu e-mail (ou Google/GitHub).</li>' +
-        '<li>Clique em <strong>New project</strong>: dê um nome, crie uma senha forte (guarde-a em lugar seguro) e escolha a região mais perto do Brasil.</li>' +
-        '<li>Clique em <strong>Create new project</strong> e espere uns 2 minutos.</li></ol>'),
-
-      etapaGuiaHtml(2, 'Preparar o banco (copiar e colar, uma vez só)',
-        '<ol><li>No menu esquerdo, abra <strong>SQL Editor</strong> → <strong>New query</strong>.</li>' +
-        '<li>Abra o arquivo <code>supabase-schema.sql</code> (veio junto com o site), selecione tudo e copie.</li>' +
-        '<li>Cole na caixa branca do Supabase e clique no botão verde <strong>Run</strong>.</li></ol>' +
-        '<p class="guia-etapa__nota">Deve aparecer "Success". Não precisa entender o que está escrito ali — é só colar e clicar.</p>'),
-
-      etapaGuiaHtml(3, 'Deixar mais seguro (2 cliques)',
-        '<ol><li><strong>Authentication → Sign In / Providers → Email.</strong></li>' +
-        '<li>Confira se <strong>Confirm email</strong> está ligado.</li>' +
-        '<li>Desligue <strong>Allow new users to sign up</strong> — assim só entra quem for convidado.</li>' +
-        '<li>Clique em <strong>Save</strong>.</li></ol>'),
-
-      etapaGuiaHtml(4, 'Criar o seu login de administrador',
-        '<ol><li><strong>Authentication → Users → Add user → Invite user</strong>, com o seu e-mail.</li>' +
-        '<li>Abra o e-mail que chegou, clique no link e crie sua senha — isso confirma o seu e-mail.</li>' +
-        '<li>Volte ao <strong>SQL Editor</strong>, cole (trocando pelo seu e-mail e nome) e clique em Run:</li></ol>' +
-        '<pre><code>insert into public.admins (user_id, nome, email)\nselect id, \'Seu Nome\', email from auth.users where email = \'seu@email.com\';</code></pre>'),
-
-      etapaGuiaHtml(5, 'Ligar o site ao banco',
-        '<ol><li><strong>Project Settings → API.</strong> Copie a <strong>Project URL</strong> e a chave <strong>anon public</strong>.</li>' +
-        '<li>Abra o arquivo <code>index.html</code> num editor de texto e procure por <code>SUPABASE_URL</code>.</li>' +
-        '<li>Cole os dois valores entre as aspas simples e salve o arquivo.</li></ol>' +
-        '<p class="guia-etapa__nota">⚠️ Use só a chave <strong>anon public</strong>. Nunca cole a chave <code>service_role</code> no site.</p>'),
-
-      etapaGuiaHtml(6, 'Conferir e publicar',
-        '<p>Abra o <code>index.html</code> de novo no navegador e tente entrar em <strong>Painel administrativo</strong> com o e-mail e a senha do Passo 4. Se abrir — está funcionando.</p>' +
-        '<p>Para deixar acessível para todo mundo pela internet, publique no GitHub e depois na Vercel (o arquivo <code>README.md</code> tem esse passo).</p>'),
-
-      '<div class="guia-config__rodape">Depois de conectado, esta tela vira o Painel de verdade — pedidos, produtos, cupons e tudo mais.</div>' +
-      '</div>'
-    );
+  /* =========================================================================
+     ASSISTENTE DE INSTALAÇÃO — liga o site a QUALQUER conta do Supabase,
+     direto pelo navegador (sem editar código). Para trocar de conta depois:
+     painel > Configurações > Conexão com o banco > "Trocar de conta".
+  ========================================================================= */
+  var wiz = { passo: 1, email: '', nome: '' };
+  var diagnosticoFeito = false;
+  try { var _w = JSON.parse(localStorage.getItem('rpo_wiz') || 'null'); if (_w) { wiz.email = _w.email || ''; wiz.nome = _w.nome || ''; } } catch (e) { /* sem armazenamento */ }
+  function salvarWiz() { try { localStorage.setItem('rpo_wiz', JSON.stringify({ email: wiz.email, nome: wiz.nome })); } catch (e) { /* ignora */ } }
+  function refDoProjeto(url) { var m = /^https:\/\/([a-z0-9]+)\.supabase\.co$/i.exec(url || ''); return m ? m[1] : ''; }
+  function linkSupabase(caminho) { var ref = refDoProjeto(SUPABASE_URL); return ref ? 'https://supabase.com/dashboard/project/' + ref + caminho : 'https://supabase.com/dashboard/projects'; }
+  function papelDaChave(chave) {
+    try { var b = String(chave).split('.')[1].replace(/-/g, '+').replace(/_/g, '/'); while (b.length % 4) b += '='; return JSON.parse(atob(b)).role || ''; } catch (e) { return ''; }
   }
-  function telaSemBancoHtml() { return guiaConfiguracaoHtml(); }
+  function copiarTexto(txt) {
+    return new Promise(function (ok) {
+      function plano() { var t = document.createElement('textarea'); t.value = txt; t.style.cssText = 'position:fixed;opacity:0;'; document.body.appendChild(t); t.select(); try { document.execCommand('copy'); } catch (e) { /* ignora */ } document.body.removeChild(t); ok(); }
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(ok, plano); else plano();
+    });
+  }
+  function baixarArquivo(nome, texto, tipo) {
+    var b = new Blob([texto], { type: tipo + ';charset=utf-8' }), a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = nome; document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 800);
+  }
+  function emailValido(e) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(e || '').trim()); }
+  function guardarConexao(url, chave) {
+    try { localStorage.setItem('rpo_conexao', JSON.stringify({ url: url, key: chave })); return true; } catch (e) { return false; }
+  }
+
+  /* testa se uma URL + chave funcionam e se o banco já está instalado */
+  async function testarConexao(url, chave) {
+    if (!(window.supabase && window.supabase.createClient)) return { estado: 'rede', msg: 'A biblioteca do Supabase não carregou. Verifique a internet e recarregue a página.' };
+    var c;
+    try { c = window.supabase.createClient(url, chave, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }); }
+    catch (e) { return { estado: 'chave', msg: 'Endereço ou chave em formato inválido.' }; }
+    try {
+      var r = await c.from('config').select('id').limit(1);
+      if (!r.error) return { estado: 'ok' };
+      var m = (r.error.message || '') + ' ' + (r.error.code || '');
+      if (/PGRST205|42P01|schema cache|does not exist/i.test(m)) return { estado: 'sem-banco' };
+      if (r.status === 401 || /invalid api key|JWT|apikey/i.test(m)) return { estado: 'chave', msg: 'A chave não foi aceita por esse projeto. Confira se copiou a chave "anon public" do mesmo projeto.' };
+      if (/fetch|network|failed/i.test(m)) return { estado: 'rede', msg: 'Não encontrei esse endereço. Confira se a Project URL está certa (termina em .supabase.co) e se a internet está ok.' };
+      return { estado: 'erro', msg: r.error.message };
+    } catch (e) { return { estado: 'rede', msg: mensagemErro(e) }; }
+  }
+
+  function cabecalhoAssistente(n) {
+    var nomes = ['Conectar', 'Banco', 'Seu acesso', 'Publicar'];
+    return '<div class="assist-passos">' + nomes.map(function (t, i) {
+      var k = i + 1;
+      return '<span class="assist-passo' + (k === n ? ' atual' : (k < n ? ' feito' : '')) + '"><b>' + (k < n ? '✓' : k) + '</b>' + t + '</span>';
+    }).join('') + '</div>';
+  }
+  function renderAssistente(n, aviso) {
+    var alvo = document.getElementById('conteudo-admin'); if (!alvo) return;
+    wiz.passo = n;
+    var corpo = n === 1 ? passo1Html() : n === 2 ? passo2Html() : n === 3 ? passo3Html() : passo4Html();
+    alvo.innerHTML = '<div class="shell-admin"><div class="assistente">' +
+      '<h1 class="assistente__titulo">Vamos ligar a loja ao banco de dados</h1>' +
+      '<p class="assistente__sub">Tudo aqui mesmo, sem mexer em código. Cada passo leva poucos minutos.</p>' +
+      cabecalhoAssistente(n) +
+      '<div class="assist-aviso" id="assist-aviso"' + (aviso ? '' : ' hidden') + '>' + escaparHtml(aviso || '') + '</div>' +
+      corpo + '</div></div>';
+    if (n === 1) anexarPasso1(); else if (n === 2) anexarPasso2(); else if (n === 3) anexarPasso3(); else anexarEventosPublicar();
+  }
+  function avisoAssistente(msg) { var el = document.getElementById('assist-aviso'); if (!el) return; el.textContent = msg || ''; el.hidden = !msg; if (msg) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+
+  /* ---- Passo 1: endereço + chave ---- */
+  function passo1Html() {
+    return '<div class="guia-etapa"><span class="guia-etapa__numero">1</span><div class="guia-etapa__corpo"><h3>Colar o endereço e a chave do Supabase</h3>' +
+      '<p>O Supabase é onde ficam guardados os pedidos, os produtos e o estoque. <strong>A conta deve ser do dono da loja.</strong></p>' +
+      '<details class="assist-detalhe"><summary>Ainda não tenho projeto no Supabase</summary><ol>' +
+      '<li>Entre em <a href="https://supabase.com/dashboard" target="_blank" rel="noopener">supabase.com</a> com o e-mail do dono e clique em <strong>New project</strong>.</li>' +
+      '<li>Nome: <code>rancho-pep-olivas</code>. Crie uma senha forte (guarde) e escolha a região <strong>South America (São Paulo)</strong>.</li>' +
+      '<li>Espere uns 2 minutos até terminar de criar.</li></ol></details>' +
+      '<p>Com o projeto aberto, vá em <strong>Project Settings → API</strong> (ícone de engrenagem) e copie:</p>' +
+      '<ul><li><strong>Project URL</strong> (termina em <code>.supabase.co</code>)</li><li>a chave <strong>anon public</strong> (ou <em>publishable</em>)</li></ul>' +
+      '<form id="form-passo1" class="assist-form">' +
+      '<div class="campo"><label>Project URL</label><input name="url" placeholder="https://abcdxyz.supabase.co" value="' + escaparHtml(SUPABASE_URL) + '" autocomplete="off" required></div>' +
+      '<div class="campo"><label>Chave anon public</label><input name="key" placeholder="eyJhbGciOi…  ou  sb_publishable_…" value="' + escaparHtml(SUPABASE_ANON_KEY) + '" autocomplete="off" required></div>' +
+      '<p class="guia-etapa__nota">⚠️ Use só a chave <strong>anon public</strong>. A chave <code>service_role</code> / <code>secret</code> dá acesso total ao banco — o site recusa essa chave de propósito.</p>' +
+      '<button class="botao botao-oliva" type="submit" id="botao-passo1">Testar e conectar</button></form></div></div>';
+  }
+  function anexarPasso1() {
+    document.getElementById('form-passo1').addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      var d = new FormData(ev.target), url = String(d.get('url') || '').trim().replace(/\/+$/, '').replace(/\/(rest|auth)\/v1.*$/, ''), chave = String(d.get('key') || '').trim();
+      avisoAssistente('');
+      if (!/^https:\/\/[a-z0-9]+\.supabase\.co$/i.test(url)) { avisoAssistente('A Project URL deve ser parecida com https://abcdxyz.supabase.co (sem nada depois de .supabase.co).'); return; }
+      if (/^sb_secret_/i.test(chave) || papelDaChave(chave) === 'service_role') { avisoAssistente('Essa é a chave SECRETA (service_role). Ela nunca pode ficar no site. Copie a chave "anon public" (ou "publishable").'); return; }
+      if (!/^[A-Za-z0-9._-]{20,}$/.test(chave)) { avisoAssistente('A chave parece incompleta. Copie a chave inteira, sem espaços.'); return; }
+      var botao = document.getElementById('botao-passo1'); botao.disabled = true; botao.textContent = 'Testando…';
+      var r = await testarConexao(url, chave);
+      botao.disabled = false; botao.textContent = 'Testar e conectar';
+      if (r.estado !== 'ok' && r.estado !== 'sem-banco') { avisoAssistente(r.msg || 'Não consegui conectar.'); return; }
+      if (!guardarConexao(url, chave)) { avisoAssistente('Seu navegador está bloqueando o armazenamento do site (aba anônima?). Abra o site numa aba normal.'); return; }
+      location.hash = '#admin'; location.reload();   // recarrega já conectado
+    });
+  }
+
+  /* ---- Passo 2: instalar o banco ---- */
+  function sqlDeInstalacao() {
+    var base = (document.getElementById('sql-base') || {}).textContent || '';
+    var q = function (v) { return "'" + String(v).replace(/'/g, "''") + "'"; };
+    var extra = '';
+    if (emailValido(wiz.email)) {
+      extra = '\n-- >>> seu acesso de administrador (gerado pelo assistente do site)\n' +
+        'insert into public.admin_convites (email, nome) values (' + q(wiz.email.trim().toLowerCase()) + ', ' + q((wiz.nome || 'Administrador').trim()) + ')\n' +
+        'on conflict (email) do update set nome = excluded.nome;\n';
+    }
+    return base.replace(/^\s+/, '') + extra;
+  }
+  function passo2Html() {
+    return '<div class="guia-etapa"><span class="guia-etapa__numero">2</span><div class="guia-etapa__corpo"><h3>Instalar o banco (copiar e colar, uma vez só)</h3>' +
+      '<p>Conectado ao projeto <code>' + escaparHtml(refDoProjeto(SUPABASE_URL) || SUPABASE_URL) + '</code> ✓. Agora vamos criar as tabelas de pedidos, produtos, cupons e o seu acesso de dono.</p>' +
+      '<form id="form-passo2" class="assist-form"><div class="grade-campos duas">' +
+      '<div class="campo"><label>Seu nome (dono / administrador)</label><input name="nome" value="' + escaparHtml(wiz.nome) + '" autocomplete="name" required></div>' +
+      '<div class="campo"><label>Seu e-mail</label><input name="email" type="email" value="' + escaparHtml(wiz.email) + '" autocomplete="email" required></div></div></form>' +
+      '<ol class="assist-lista"><li>Clique em <strong>Copiar SQL</strong>.</li>' +
+      '<li>Clique em <strong>Abrir o editor do Supabase</strong> (abre em outra aba), cole com <strong>Ctrl+V</strong> na caixa e clique em <strong>Run</strong>.</li>' +
+      '<li>Deve aparecer <em>Success</em>. Volte aqui e clique em <strong>Já rodei, verificar</strong>.</li></ol>' +
+      '<div class="assist-botoes"><button class="botao botao-oliva" type="button" id="botao-copiar-sql">Copiar SQL</button>' +
+      '<a class="botao botao-contorno" id="link-sql" target="_blank" rel="noopener" href="' + escaparHtml(linkSupabase('/sql/new')) + '">Abrir o editor do Supabase ↗</a>' +
+      '<button class="botao botao-contorno" type="button" id="botao-verificar-banco">Já rodei, verificar</button></div>' +
+      '<details class="assist-detalhe"><summary>Ver o SQL</summary><textarea id="caixa-sql" class="assist-sql" readonly rows="8"></textarea></details>' +
+      '<p class="guia-etapa__nota">Pode rodar de novo sem medo: o SQL não duplica nada.</p></div></div>';
+  }
+  function anexarPasso2() {
+    var form = document.getElementById('form-passo2'), caixa = document.getElementById('caixa-sql');
+    function ler() { var d = new FormData(form); wiz.nome = String(d.get('nome') || '').trim(); wiz.email = String(d.get('email') || '').trim(); salvarWiz(); caixa.value = sqlDeInstalacao(); }
+    form.addEventListener('input', ler); form.addEventListener('submit', function (e) { e.preventDefault(); }); ler();
+    document.getElementById('botao-copiar-sql').addEventListener('click', async function () {
+      ler();
+      if (wiz.nome.length < 2 || !emailValido(wiz.email)) { avisoAssistente('Preencha seu nome e um e-mail válido antes de copiar — é com ele que você vai entrar no painel.'); return; }
+      avisoAssistente(''); await copiarTexto(sqlDeInstalacao()); mostrarToast('SQL copiado! Agora cole no editor do Supabase.');
+    });
+    document.getElementById('botao-verificar-banco').addEventListener('click', async function () {
+      ler();
+      if (wiz.nome.length < 2 || !emailValido(wiz.email)) { avisoAssistente('Preencha seu nome e e-mail acima (eles precisam estar no SQL que você rodou).'); return; }
+      var botao = this; botao.disabled = true; botao.textContent = 'Verificando…';
+      var r = await testarConexao(SUPABASE_URL, SUPABASE_ANON_KEY), versaoOk = true;
+      if (r.estado === 'ok') {
+        var f = await sb.rpc('reivindicar_admin');
+        if (f.error && /PGRST202|could not find the function/i.test((f.error.code || '') + ' ' + (f.error.message || ''))) versaoOk = false;
+      }
+      botao.disabled = false; botao.textContent = 'Já rodei, verificar';
+      if (r.estado === 'sem-banco') { avisoAssistente('Ainda não encontrei as tabelas. Confira se colou TODO o SQL no editor e clicou em Run (tem que aparecer "Success").'); return; }
+      if (r.estado !== 'ok') { avisoAssistente(r.msg || 'Não consegui verificar.'); return; }
+      if (!versaoOk) { avisoAssistente('O banco tem uma versão antiga. Copie o SQL de novo (botão acima), cole no editor e clique em Run.'); return; }
+      try { await carregarPublico(); } catch (e) { /* segue */ }
+      diagnosticoFeito = true; mostrarToast('Banco instalado!'); renderAssistente(3);
+    });
+  }
+
+  /* ---- Passo 3: criar o acesso do dono ---- */
+  function passo3Html() {
+    var site = urlDoSite();
+    return '<div class="guia-etapa"><span class="guia-etapa__numero">3</span><div class="guia-etapa__corpo"><h3>Criar o seu acesso ao painel</h3>' +
+      (site
+        ? '<p><strong>3a.</strong> Para o e-mail de confirmação abrir no site certo, no Supabase vá em <em>Authentication → URL Configuration</em> e cole este endereço em <strong>Site URL</strong> e também em <strong>Redirect URLs</strong> (Add URL), depois Save.</p>' +
+          '<div class="assist-copia"><code id="site-url">' + escaparHtml(site) + '</code><button class="botao botao-contorno" type="button" id="botao-copiar-site">Copiar</button></div>' +
+          '<div class="assist-botoes"><a class="botao botao-contorno" target="_blank" rel="noopener" href="' + escaparHtml(linkSupabase('/auth/url-configuration')) + '">Abrir URL Configuration ↗</a></div>'
+        : '<p class="guia-etapa__nota">Você abriu o site pelo arquivo no computador. Para criar o acesso, abra o endereço publicado (o link <code>.vercel.app</code>) e entre em <code>/#admin</code> de lá.</p>') +
+      '<p style="margin-top:16px;"><strong>3b.</strong> Crie sua senha. Use o <strong>mesmo e-mail</strong> do passo anterior; vamos enviar um e-mail de confirmação.</p>' +
+      '<form id="form-passo3" class="assist-form">' +
+      '<div class="campo"><label>E-mail</label><input name="email" type="email" value="' + escaparHtml(wiz.email) + '" autocomplete="username" required></div>' +
+      '<div class="grade-campos duas"><div class="campo"><label>Senha</label><input name="senha" type="password" autocomplete="new-password" required></div>' +
+      '<div class="campo"><label>Repita a senha</label><input name="repita" type="password" autocomplete="new-password" required></div></div>' +
+      '<p class="cartao-login__dica" style="margin:0;">Mínimo de 8 caracteres, misturando letras e números.</p>' +
+      '<button class="botao botao-oliva" type="submit" id="botao-passo3">Criar meu acesso</button></form>' +
+      '<div id="passo3-ok" hidden></div>' +
+      '<p style="margin-top:14px;"><button class="botao-texto" type="button" id="botao-ja-tenho">Já tenho acesso — ir para o login</button></p></div></div>';
+  }
+  function anexarPasso3() {
+    var copiar = document.getElementById('botao-copiar-site');
+    if (copiar) copiar.addEventListener('click', async function () { await copiarTexto(urlDoSite()); mostrarToast('Endereço copiado'); });
+    document.getElementById('botao-ja-tenho').addEventListener('click', function () { diagnosticoFeito = true; renderAdmin(); });
+    document.getElementById('form-passo3').addEventListener('submit', async function (ev) {
+      ev.preventDefault(); avisoAssistente('');
+      var d = new FormData(ev.target), email = String(d.get('email') || '').trim().toLowerCase(), senha = String(d.get('senha') || '');
+      var msg = !emailValido(email) ? 'Digite um e-mail válido.' : validarForcaSenha(senha); if (!msg && senha !== d.get('repita')) msg = 'As duas senhas não são iguais.';
+      if (msg) { avisoAssistente(msg); return; }
+      wiz.email = email; salvarWiz();
+      var botao = document.getElementById('botao-passo3'); botao.disabled = true; botao.textContent = 'Criando…';
+      try {
+        var r = await sb.auth.signUp({ email: email, password: senha, options: { emailRedirectTo: urlDoSite() || undefined } });
+        if (r.error) {
+          avisoAssistente(/already registered|already been registered/i.test(r.error.message || '') ? 'Esse e-mail já tem conta. Se já confirmou, clique em "Já tenho acesso — ir para o login".' :
+            /signups? (are )?not allowed|disabled/i.test(r.error.message || '') ? 'O cadastro está desligado no Supabase. Em Authentication → Sign In / Providers, ligue "Allow new users to sign up", crie o acesso e depois pode desligar de novo.' : mensagemErro(r.error));
+          return;
+        }
+        if (r.data && r.data.session) {            // confirmação de e-mail desligada no projeto: já entra
+          await verificarSessaoAdmin();
+          if (estado.admin) { aposAcessoCriado(); return; }
+          avisoAssistente('Conta criada, mas este e-mail não está na lista do passo 2. Volte ao passo 2, confira o e-mail, rode o SQL de novo e entre.'); return;
+        }
+        var ok = document.getElementById('passo3-ok');
+        ok.hidden = false; ok.className = 'assist-ok';
+        ok.innerHTML = '📧 <strong>Quase lá!</strong> Enviamos um e-mail para <strong>' + escaparHtml(email) + '</strong>. Abra, clique no link de confirmação — o site abre sozinho já dentro do painel.<br><span style="font-size:.8rem;">Não chegou? Veja o spam. O envio do Supabase tem limite por hora; se travar, confirme o usuário manualmente em Authentication → Users.</span>' +
+          '<div class="assist-botoes" style="margin-top:12px;"><button class="botao botao-contorno" type="button" id="botao-reenviar-conf">Reenviar e-mail</button></div>';
+        document.getElementById('botao-reenviar-conf').addEventListener('click', async function () {
+          var x = await sb.auth.resend({ type: 'signup', email: email, options: { emailRedirectTo: urlDoSite() || undefined } });
+          mostrarToast(x.error ? mensagemErro(x.error) : 'E-mail reenviado');
+        });
+      } catch (e) { avisoAssistente(mensagemErro(e)); }
+      finally { botao.disabled = false; botao.textContent = 'Criar meu acesso'; }
+    });
+  }
+  function aposAcessoCriado() {
+    if (ORIGEM_CONEXAO === 'navegador') renderAssistente(4); else { adminAba = 'visao'; renderAdmin(); }
+  }
+
+  /* ---- Passo 4 / bloco "Publicar": deixa a conexão valendo para TODOS os visitantes ---- */
+  function linhasDeConexao() { return "var EMBUTIDO_URL = '" + SUPABASE_URL + "';\nvar EMBUTIDO_KEY = '" + SUPABASE_ANON_KEY + "';"; }
+  function publicarHtml(comTitulo) {
+    var pronto = ORIGEM_CONEXAO === 'arquivo';
+    return (comTitulo ? '<div class="guia-etapa"><span class="guia-etapa__numero">4</span><div class="guia-etapa__corpo"><h3>Publicar para todos os clientes</h3>' : '<div class="assist-bloco">') +
+      (pronto
+        ? '<p class="assist-ok">✅ A conexão já está gravada no arquivo do site — qualquer cliente, em qualquer aparelho, usa este banco.</p>'
+        : '<p>Até aqui a loja funciona <strong>neste navegador</strong>. Para os clientes (em outros celulares) enxergarem a loja ligada ao banco, o endereço do banco precisa ficar dentro do arquivo publicado. <strong>É só uma vez</strong>:</p>' +
+          '<ol class="assist-lista"><li>Clique em <strong>Baixar index.html pronto</strong>.</li>' +
+          '<li>No <strong>GitHub</strong>, abra o repositório do site → <em>Add file → Upload files</em> → arraste o <code>index.html</code> baixado → <strong>Commit changes</strong>.</li>' +
+          '<li>A Vercel publica sozinha em ~1 minuto. Pronto — nada mais para mexer.</li></ol>' +
+          '<div class="assist-botoes"><button class="botao botao-oliva" type="button" id="botao-baixar-index">Baixar index.html pronto</button>' +
+          '<button class="botao botao-contorno" type="button" id="botao-copiar-linhas">Copiar só as 2 linhas</button></div>' +
+          '<details class="assist-detalhe"><summary>Prefiro editar direto no GitHub</summary><ol>' +
+          '<li>Abra o <code>index.html</code> no GitHub e clique no lápis ✏️ (Edit).</li><li>Aperte <strong>Ctrl+F</strong>, procure <code>EMBUTIDO_URL</code> e troque as duas linhas pelas copiadas no botão acima.</li><li><strong>Commit changes</strong>.</li></ol></details>' +
+          '<p class="guia-etapa__nota" id="nota-baixar" hidden></p>') +
+      (comTitulo ? '<p style="margin-top:18px;"><button class="botao botao-contorno" type="button" id="botao-entrar-painel">Entrar no painel →</button></p></div></div>' : '</div>');
+  }
+  function passo4Html() { return publicarHtml(true); }
+  async function gerarIndexConfigurado() {
+    var html = '';
+    try { var r = await fetch(location.href.split('#')[0].split('?')[0], { cache: 'no-store' }); if (!r.ok) return ''; html = await r.text(); } catch (e) { return ''; }
+    var u = "var EMBUTIDO_URL = '" + SUPABASE_URL + "';", k = "var EMBUTIDO_KEY = '" + SUPABASE_ANON_KEY + "';";
+    var novo = html.replace(/var EMBUTIDO_URL = '[^']*';/, function () { return u; }).replace(/var EMBUTIDO_KEY = '[^']*';/, function () { return k; });
+    return novo.indexOf(u) > -1 && novo.indexOf(k) > -1 ? novo : '';
+  }
+  function anexarEventosPublicar() {
+    var baixar = document.getElementById('botao-baixar-index'), linhas = document.getElementById('botao-copiar-linhas'), entrar = document.getElementById('botao-entrar-painel');
+    if (baixar) baixar.addEventListener('click', async function () {
+      var nota = document.getElementById('nota-baixar'), html = await gerarIndexConfigurado();
+      if (!html) { nota.hidden = false; nota.textContent = 'Não consegui montar o arquivo automaticamente aqui (isso acontece quando o site é aberto como arquivo no computador). Use o botão "Copiar só as 2 linhas" e cole no lugar de EMBUTIDO_URL / EMBUTIDO_KEY.'; return; }
+      baixarArquivo('index.html', html, 'text/html'); nota.hidden = false; nota.textContent = 'Arquivo baixado! Agora envie esse index.html para o GitHub (substituindo o antigo).';
+    });
+    if (linhas) linhas.addEventListener('click', async function () { await copiarTexto(linhasDeConexao()); mostrarToast('Linhas copiadas'); });
+    if (entrar) entrar.addEventListener('click', function () { adminAba = 'visao'; renderAdmin(); });
+  }
+
+  /* ---- Se o banco está ligado mas não instalado / chave errada: abre o passo certo ---- */
+  async function abrirAssistenteConforme() {
+    var alvo = document.getElementById('conteudo-admin'); if (!alvo) return;
+    alvo.innerHTML = '<div class="shell-admin"><p style="padding:40px 0;text-align:center;color:var(--terra-55);">Verificando a conexão…</p></div>';
+    var r = await testarConexao(SUPABASE_URL, SUPABASE_ANON_KEY);
+    if (r.estado === 'ok') { diagnosticoFeito = true; renderAdmin(); return; }
+    if (r.estado === 'sem-banco') { renderAssistente(2); return; }
+    renderAssistente(1, r.msg || 'Não consegui falar com o banco.');
+  }
+
+  /* ---- Bloco "Conexão com o banco" (aba Configurações) ---- */
+  function telaConexaoHtml() {
+    var ref = refDoProjeto(SUPABASE_URL);
+    return '<div class="bloco-config conexao-bloco" style="max-width:640px;margin-top:34px;padding-top:26px;border-top:1px solid var(--terra-20);">' +
+      '<h3 style="font-size:1.05rem;margin-bottom:6px;">Conexão com o banco de dados</h3>' +
+      '<p class="bloco-config__ajuda" style="margin-top:0;">Conectado a <code>' + escaparHtml(ref || SUPABASE_URL) + '</code> · ' +
+      (ORIGEM_CONEXAO === 'arquivo' ? '<span class="selo-status ok">gravada no site ✓</span>' : '<span class="selo-status pendente">só neste navegador — falta publicar</span>') + '</p>' +
+      '<div class="assist-botoes"><a class="botao botao-contorno" target="_blank" rel="noopener" href="' + escaparHtml(linkSupabase('/editor')) + '">Abrir meu Supabase ↗</a></div>' +
+      '<h4 style="font-size:.95rem;margin:22px 0 6px;">Publicar para todos</h4>' + publicarHtml(false) +
+      '<h4 style="font-size:.95rem;margin:26px 0 6px;">Backup e troca de conta</h4>' +
+      '<p class="bloco-config__ajuda" style="margin-top:0;">O backup leva <strong>produtos, cupons e configurações</strong> (os pedidos têm o botão de exportar CSV na aba Pedidos). Para trocar de conta: baixe o backup, clique em "Trocar de conta", conecte a nova conta e use "Restaurar backup". As fotos continuam na conta antiga enquanto ela existir.</p>' +
+      '<div class="assist-botoes"><button class="botao botao-contorno" type="button" id="botao-backup">Baixar backup</button>' +
+      '<label class="botao botao-contorno" style="cursor:pointer;">Restaurar backup<input type="file" id="arquivo-backup" accept="application/json,.json" hidden></label>' +
+      '<button class="botao botao-contorno" type="button" id="botao-trocar-conta" style="color:var(--vinho);">Trocar de conta Supabase</button></div>' +
+      '<p class="campo-erro" id="erro-conexao" hidden></p></div>';
+  }
+  function anexarEventosConexao() {
+    anexarEventosPublicar();
+    var erroEl = document.getElementById('erro-conexao');
+    function falha(msg) { erroEl.textContent = msg; erroEl.hidden = false; }
+    document.getElementById('botao-backup').addEventListener('click', async function () {
+      erroEl.hidden = true;
+      var r = await Promise.all([sb.from('config').select('*').eq('id', 1).single(), sb.from('produtos').select('*'), sb.from('cupons').select('*')]);
+      var e = r[0].error || r[1].error || r[2].error; if (e) { falha(mensagemErro(e)); return; }
+      var dados = { tipo: 'rancho-pep-olivas-backup', versao: 1, geradoEm: new Date().toISOString(), config: r[0].data, produtos: r[1].data, cupons: r[2].data };
+      baixarArquivo('backup-rancho-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify(dados, null, 2), 'application/json');
+      mostrarToast('Backup baixado');
+    });
+    document.getElementById('arquivo-backup').addEventListener('change', async function (ev) {
+      var arq = ev.target.files && ev.target.files[0]; ev.target.value = ''; erroEl.hidden = true; if (!arq) return;
+      var d; try { d = JSON.parse(await arq.text()); } catch (e) { falha('Esse arquivo não é um backup válido.'); return; }
+      if (!d || d.tipo !== 'rancho-pep-olivas-backup' || !Array.isArray(d.produtos)) { falha('Esse arquivo não é um backup do Rancho Pep Olivas.'); return; }
+      if (!confirm('Restaurar o backup de ' + String(d.geradoEm || '').slice(0, 10) + '?\n\nIsso SUBSTITUI todos os produtos atuais por ' + d.produtos.length + ' produto(s) do arquivo e atualiza cupons e configurações. Pedidos não são alterados.')) return;
+      try {
+        if (d.config) { var cfg = Object.assign({}, d.config); delete cfg.id; delete cfg.atualizado_em; var a = await sb.from('config').update(cfg).eq('id', 1); if (a.error) throw a.error; }
+        var del = await sb.from('produtos').delete().not('id', 'is', null); if (del.error) throw del.error;
+        for (var i = 0; i < d.produtos.length; i += 100) { var ins = await sb.from('produtos').insert(d.produtos.slice(i, i + 100)); if (ins.error) throw ins.error; }
+        if (Array.isArray(d.cupons) && d.cupons.length) { var cup = d.cupons.map(function (c) { var x = Object.assign({}, c); delete x.id; return x; }); var up = await sb.from('cupons').upsert(cup, { onConflict: 'codigo' }); if (up.error) throw up.error; }
+        await carregarPublico(); aplicarTudoVisual(); mostrarToast('Backup restaurado'); renderAbaAdmin(true);
+      } catch (e) { falha('Não deu para restaurar: ' + mensagemErro(e)); }
+    });
+    document.getElementById('botao-trocar-conta').addEventListener('click', async function () {
+      if (!confirm('Trocar de conta do Supabase?\n\nEste navegador deixa de usar o banco atual e abre o assistente para conectar outro. Nada é apagado na conta antiga.\n\nDica: baixe o backup antes.')) return;
+      try { await sb.auth.signOut(); } catch (e) { /* ignora */ }
+      try { localStorage.setItem('rpo_conexao', JSON.stringify({ limpo: true })); } catch (e) { /* ignora */ }
+      location.hash = '#admin'; location.reload();
+    });
+  }
+
 
   function telaLoginAdminHtml() {
     return '<div class="tela-login-admin"><div class="cartao-login">' +
@@ -2094,6 +2849,7 @@ ul{ margin:0; padding:0; list-style:none; }
       '<button type="button" class="botao-texto" id="botao-reenviar" hidden>reenviar e-mail de verificação</button>' +
       '<button class="botao botao-oliva botao-bloco" type="submit" id="botao-entrar">Entrar</button>' +
       '<button type="button" class="botao-texto" id="botao-esqueci" style="align-self:center;">esqueci minha senha</button>' +
+      '<button type="button" class="botao-texto" id="botao-criar-acesso" style="align-self:center;">primeiro acesso? criar meu acesso</button>' +
       '</form></div></div>';
   }
   function anexarEventoLoginAdmin() {
@@ -2122,6 +2878,7 @@ ul{ margin:0; padding:0; list-style:none; }
       var r = await sb.auth.resend({ type: 'signup', email: email });
       mostrarToast(r.error ? mensagemErro(r.error) : 'E-mail de verificação reenviado');
     });
+    document.getElementById('botao-criar-acesso').addEventListener('click', function () { renderAssistente(3); });
     document.getElementById('botao-esqueci').addEventListener('click', async function () {
       var email = document.getElementById('usuario-admin').value.trim();
       if (!email) { erro('Digite seu e-mail acima e clique de novo em "esqueci minha senha".'); return; }
@@ -2204,6 +2961,7 @@ ul{ margin:0; padding:0; list-style:none; }
   function itensChecklistPrimeirosPassos() {
     var c = estado.config;
     return [
+      { feito: ORIGEM_CONEXAO === 'arquivo', texto: 'Publicar a conexão com o banco para todos os clientes (Configurações → Conexão)', aba: 'config' },
       { feito: c.whatsapp !== CONFIG_PADRAO.whatsapp, texto: 'Trocar o WhatsApp de exemplo pelo número real', aba: 'config' },
       { feito: !!c.pixChave && c.pixChave !== CONFIG_PADRAO.pixChave, texto: 'Colocar a chave PIX real', aba: 'config' },
       { feito: estado.produtos.some(function (p) { return p.ativo; }), texto: 'Cadastrar ao menos 1 produto', aba: 'produtos' },
@@ -2630,9 +3388,10 @@ ul{ margin:0; padding:0; list-style:none; }
       campo('Instagram (link ou @usuario)', 'instagram', c.instagram, 'placeholder="@seurancho"') + campo('Facebook (link)', 'facebook', c.facebook) +
       '<div class="grade-campos duas">' + campo('Outro link — rótulo', 'outroLinkRotulo', c.outroLinkRotulo, 'placeholder="Ex.: Cardápio"') + campo('Outro link — endereço', 'outroLinkUrl', c.outroLinkUrl, 'placeholder="https://…"') + '</div>' +
       '<p class="campo-erro" id="erro-config" hidden></p><button class="botao botao-oliva" type="submit" style="margin-top:20px;">Salvar configurações</button></form>' +
-      '<details class="painel-novo-produto" style="margin-top:30px;"><summary>Ver o guia de configuração de novo</summary>' + guiaConfiguracaoHtml() + '</details>';
+      telaConexaoHtml();
   }
   function anexarEventosConfig() {
+    anexarEventosConexao();
     document.getElementById('form-config').addEventListener('submit', async function (ev) {
       ev.preventDefault();
       var d = new FormData(ev.target), erroEl = document.getElementById('erro-config'); erroEl.hidden = true;
@@ -2670,7 +3429,7 @@ ul{ margin:0; padding:0; list-style:none; }
       '<div class="bloco-config"><p class="bloco-config__ajuda" style="margin-top:0;">Só entra no painel quem tem usuário próprio <strong>e e-mail verificado</strong>. Você pode remover o acesso de qualquer pessoa a qualquer momento.</p>' +
       '<div class="lista-admins">' + lista + '</div>' +
       '<form id="form-novo-admin"><h3 style="font-size:1rem;margin-bottom:8px;">Adicionar administrador</h3>' +
-      '<ol class="passo-a-passo"><li>No Supabase: <em>Authentication → Users → Invite user</em> e digite o e-mail da pessoa.</li><li>Ela abre o e-mail, aceita o convite e cria a senha (isso verifica o e-mail).</li><li>Volte aqui e informe o mesmo e-mail abaixo.</li></ol>' +
+      '<ol class="passo-a-passo"><li>Digite o nome e o e-mail da pessoa abaixo e clique em adicionar.</li><li>Ela abre o site em <em>/#admin</em>, clica em <strong>primeiro acesso? criar meu acesso</strong> e cria a senha.</li><li>Confirma o e-mail que receber — pronto, já entra no painel (não precisa mexer no Supabase).</li></ol>' +
       '<div class="grade-campos duas" style="margin-top:14px;"><div class="campo"><label>Nome</label><input name="nome" required></div><div class="campo"><label>E-mail</label><input name="email" type="email" required></div></div>' +
       '<p class="campo-erro" id="erro-novo-admin" hidden></p><button class="botao botao-contorno" type="submit" style="margin-top:14px;">+ Adicionar administrador</button></form></div>' +
       '<form id="form-minha-conta" class="bloco-config" style="margin-top:34px;padding-top:26px;border-top:1px solid var(--terra-20);"><h3 style="font-size:1rem;margin-bottom:14px;">Minha conta — trocar minha senha</h3>' +
@@ -2692,7 +3451,7 @@ ul{ margin:0; padding:0; list-style:none; }
       var d = new FormData(ev.target), erroEl = document.getElementById('erro-novo-admin'); erroEl.hidden = true;
       var r = await sb.rpc('adicionar_admin', { p_email: String(d.get('email')).trim(), p_nome: String(d.get('nome')).trim() });
       if (r.error) { erroEl.textContent = mensagemErro(r.error); erroEl.hidden = false; return; }
-      mostrarToast('Administrador adicionado'); await carregarAdmins(); renderAbaAdmin(true);
+      mostrarToast(r.data === 'convite' ? 'Convite registrado — peça para a pessoa criar o acesso na tela de login' : 'Administrador adicionado'); ev.target.reset(); await carregarAdmins(); renderAbaAdmin(true);
     });
     document.getElementById('form-minha-conta').addEventListener('submit', async function (ev) {
       ev.preventDefault();
@@ -2797,6 +3556,7 @@ ul{ margin:0; padding:0; list-style:none; }
 
   async function iniciar() {
     var veioDeLinkDeSenha = /(^#|&)type=(invite|recovery)/.test(location.hash || '');
+    var veioDeConfirmacao = /(^#|&)type=(signup|email)/.test(location.hash || '') || /[?&#]error_code=/.test(location.href);
     var configurado = !!(SUPABASE_URL && SUPABASE_ANON_KEY);
     if (configurado && window.supabase && window.supabase.createClient) {
       try { sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }); NUVEM = true; }
@@ -2816,7 +3576,7 @@ ul{ margin:0; padding:0; list-style:none; }
     aoMudarRota();                       // mostra a página com "carregando"
     await carregarPublico();             // busca configurações e produtos no banco
     if (NUVEM) { try { await verificarSessaoAdmin(); } catch (e) { estado.admin = null; } }
-    if (recuperandoSenha) location.hash = '#admin';
+    if (recuperandoSenha || veioDeConfirmacao) { location.hash = '#admin'; diagnosticoFeito = true; }
     aplicarTudoVisual(); atualizarVistaAtual();
   }
 
